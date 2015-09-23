@@ -1,3 +1,8 @@
+"""
+Full writeup of the walkthrough:
+http://0x0atang.github.io/reversing/2015/09/17/flareon2-concolic.html
+"""
+
 import angr, simuvex
 
 # Load binary
