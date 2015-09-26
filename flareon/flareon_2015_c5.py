@@ -1,33 +1,19 @@
-"""
-Full writeup of the walkthrough:
-http://0x0atang.github.io/reversing/2015/09/18/flareon5-concolic.html
-"""
-
 import angr
 import simuvex
 
 
 # Globals
 LEN_PW = 0x22
-ADDR_PW_ORI = ADDR_PW_ENC = ADDR_HASH = 0
+ADDR_PW_ORI = ADDR_HASH = 0
 GOAL_HASH = 'UDYs1D7bNmdE1o3g5ms1V6RrYCVvODJF1DpxKTxAJ9xuZW=='
 
-
-def hook_duplicate_pw_buf(state):
-    for i in xrange(LEN_PW):
-        char_ori = state.memory.load(ADDR_PW_ORI + i, 1)
-        state.memory.store(ADDR_PW_ENC + i, char_ori)
-    state.regs.ebx = ADDR_PW_ENC
-
-def hook_use_dup_pw_buf(state):
-    state.regs.ecx = ADDR_PW_ENC
 
 def hook_heapalloc(state):
     state.regs.eax = ADDR_HASH
 
 
 def main():
-    global ADDR_PW_ORI, ADDR_PW_ENC, ADDR_HASH
+    global ADDR_PW_ORI, ADDR_HASH
     
     # Load binary
     p = angr.Project('sender')
@@ -38,17 +24,21 @@ def main():
     
     # Initialize global variables
     ADDR_PW_ORI = state.regs.ebp - 0x80004
-    ADDR_PW_ENC = ADDR_PW_ORI + 0x10000
     ADDR_HASH = state.regs.ebp - 0x40000
     
     # Setup stack to simulate the state after which the "key.txt" is read
     state.regs.esi = LEN_PW
-    for i in xrange(LEN_PW):
-        state.mem[ADDR_PW_ORI+i:].byte = state.BV('pw', 8)
     
-    # Hook instructions to use a separate buffer for the XOR-ing function
-    p.hook(0x401259, hook_duplicate_pw_buf, length=0)
-    p.hook(0x4011E7, hook_use_dup_pw_buf, length=0)
+    # Restrict the password to printable bytes, ending with a null byte
+    pw_char = state.BV('PW_CHAR', 8)
+    pw_str = pw_char
+    for i in xrange(LEN_PW):
+        state.add_constraints(pw_char >= 0x21, pw_char <= 0x7e)
+        state.mem[ADDR_PW_ORI+i:].byte = pw_char
+        pw_char = state.BV('PW_CHAR', 8)
+        pw_str = pw_str.concat(pw_char)
+        
+    state.add_constraints(pw_char == 0)
     
     # To avoid calling imports (HeapAlloc), retrofit part of the stack as 
     # temporary buffer to hold symbolic copy of the password
@@ -68,8 +58,7 @@ def main():
                                 char == ord(GOAL_HASH[i]))
     
     # Solve for password that will result in the required hash
-    print found_s.se.any_str(found_s.memory.load(ADDR_PW_ORI+0, 1)) + \
-          found_s.se.any_str(found_s.memory.load(ADDR_PW_ORI+1, LEN_PW-1))
+    print found_s.se.any_str(pw_str)
 
 
 if __name__ == '__main__':
